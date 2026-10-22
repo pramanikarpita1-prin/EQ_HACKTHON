@@ -17,7 +17,7 @@ st.markdown('''<style>
 </style>''', unsafe_allow_html=True)
 st.markdown("<div class='hero'><h1>EQ Predictive Release Lead-Time</h1><div>Interactive point-in-time prediction and SHAP explainability</div></div>", unsafe_allow_html=True)
 
-DATA=Path(__file__).with_name('Expanded_Synthetic_Historical_Batch_Data_with_Suppliers 2 (1).xlsx')
+DATA=Path(__file__).with_name('Expanded_Synthetic_Historical_Batch_Data_with_Suppliers.xlsx')
 
 @st.cache_data
 def load_data():
