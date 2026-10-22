@@ -2,99 +2,154 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import shap
-from pathlib import Path
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.impute import SimpleImputer
-from sklearn.ensemble import RandomForestRegressor
 
-st.set_page_config(page_title='EQ Predictive Release Lead-Time', page_icon='📦', layout='wide')
-st.markdown('''<style>
-.block-container{padding-top:1.5rem}.hero{background:linear-gradient(110deg,#7f005d,#d4147a);padding:22px 28px;border-radius:16px;color:white;margin-bottom:18px}
-.kpi{background:#fff5fb;border:1px solid #eed8e6;border-radius:14px;padding:16px}.small{color:#77536c;font-size:.85rem}
-</style>''', unsafe_allow_html=True)
-st.markdown("<div class='hero'><h1>EQ Predictive Release Lead-Time</h1><div>Interactive point-in-time prediction and SHAP explainability</div></div>", unsafe_allow_html=True)
+st.set_page_config(page_title="EQ Predictive Release Lead Time", layout="wide")
 
-DATA=Path(__file__).with_name('Expanded_Synthetic_Historical_Batch_Data_with_Suppliers.xlsx')
+st.markdown(
+    """
+    <style>
+    .block-container {padding-top: 1.4rem; max-width: 1220px;}
+    .snap {background:#06466e;border-radius:10px;padding:30px 24px;color:white;min-height:480px;}
+    .eyebrow {color:#62c8dc;font-weight:800;letter-spacing:2px;font-size:14px;}
+    .batchid {font-size:38px;font-weight:800;margin:15px 0 5px;}
+    .sub {font-size:16px;margin-bottom:18px;}
+    .rule {border-top:1px solid #5f88a1;margin:18px 0;}
+    .kv {display:flex;justify-content:space-between;gap:10px;margin:21px 0;color:#d3e4ef;}
+    .kv b {color:white;font-size:19px;}
+    .risk {border-radius:6px;padding:20px 16px;margin:36px 0 30px;font-weight:800;text-align:center;color:white;}
+    .driver-title {font-size:18px;font-weight:700;color:#2d2030;margin:8px 0 2px;}
+    .driverhead {color:#06466e;font-weight:800;letter-spacing:2px;font-size:14px;}
+    .impact-note {background:#eaf3f7;color:#06466e;font-weight:700;text-align:center;padding:9px;border-radius:4px;margin-top:4px;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-@st.cache_data
-def load_data():
-    b=pd.read_excel(DATA,sheet_name='Historical Batch Data',header=3,engine='openpyxl')
-    o=pd.read_excel(DATA,sheet_name='OOS Events',header=0,engine='openpyxl')
-    for c in ['Prediction / Start Date','Planned Release Date','Actual Release Date']: b[c]=pd.to_datetime(b[c],errors='coerce')
-    for c in ['OOS Event Date','Closure Date']: o[c]=pd.to_datetime(o[c],errors='coerce')
-    def c90(r):
-        m=(o.Material.astype(str)==str(r.Material))&(o['CMO Site'].astype(str)==str(r['CMO Site']))&(o['OOS Event Date']>=r['Prediction / Start Date']-pd.Timedelta(days=90))&(o['OOS Event Date']<r['Prediction / Start Date'])
-        return int(m.sum())
-    b['OOS Count Previous 90 Days']=b.apply(c90,axis=1)
-    b['Release Lead Time (Days)']=(b['Actual Release Date']-b['Prediction / Start Date']).dt.days
-    sp=b['Testing Type / Complexity'].astype(str).str.split('/',n=1,expand=True)
-    b['Testing Type']=sp[0].str.strip(); b['Complexity']=sp[1].str.strip(); b['Start Month']=b['Prediction / Start Date'].dt.month.astype(str)
-    return b.sort_values('Prediction / Start Date').reset_index(drop=True)
+# DEMO DATA. Replace these two objects with actual model predictions and SHAP impacts.
+predictions = pd.DataFrame([
+    {"Batch ID":"B-4533","CMO Site":"CMO Beta","Material":"Drug Y","Planned Release Date":"2026-07-23","Predicted Release Date":"2026-07-28"},
+    {"Batch ID":"B-5022","CMO Site":"CMO Alpha","Material":"Drug X","Planned Release Date":"2026-08-04","Predicted Release Date":"2026-08-06"},
+    {"Batch ID":"B-4768","CMO Site":"CMO Gamma","Material":"Drug Z","Planned Release Date":"2026-08-12","Predicted Release Date":"2026-08-11"},
+])
 
-FEATURES=['Material','Supplier Number','CMO Site','QC Backlog at Start','OOS Count Previous 90 Days','QC Sample Count','Testing Type','Complexity','Start Month']
-CAT=['Material','Supplier Number','CMO Site','Testing Type','Complexity','Start Month']
-NUM=['QC Backlog at Start','OOS Count Previous 90 Days','QC Sample Count']
+driver_map = {
+    "B-4533": {"Site QC backlog":2.1,"Recent OOS history":1.5,"High test complexity":0.9,"Strong product history":-0.6},
+    "B-5022": {"Site QC backlog":0.8,"Recent OOS history":0.3,"Testing complexity":0.7,"Supplier history":-0.4},
+    "B-4768": {"Site QC backlog":-0.2,"Recent OOS history":0.1,"Testing complexity":-0.5,"Product history":-0.7},
+}
 
-@st.cache_resource
-def train_model(df):
-    cut=int(len(df)*.8); tr=df.iloc[:cut]
-    pre=ColumnTransformer([('cat',Pipeline([('imp',SimpleImputer(strategy='most_frequent')),('oh',OneHotEncoder(handle_unknown='ignore',sparse_output=False))]),CAT),('num',Pipeline([('imp',SimpleImputer(strategy='median')),('scale',StandardScaler())]),NUM)])
-    pipe=Pipeline([('prep',pre),('model',RandomForestRegressor(n_estimators=500,min_samples_leaf=3,random_state=42))])
-    pipe.fit(tr[FEATURES],tr['Release Lead Time (Days)'])
-    return pipe
+MODEL_MAE_DAYS = 3.3
 
-df=load_data(); model=train_model(df)
-with st.sidebar:
-    st.header('Find a batch')
-    batch=st.selectbox('Batch ID',df['Batch ID'].astype(str).tolist(),index=0)
-    st.caption('Select or type a Batch ID to view the model prediction.')
 
-row=df[df['Batch ID'].astype(str)==str(batch)].iloc[[0]].copy()
-pred_days=float(model.predict(row[FEATURES])[0]); pred_date=row['Prediction / Start Date'].iloc[0]+pd.to_timedelta(round(pred_days),unit='D')
-actual_date=row['Actual Release Date'].iloc[0]; planned=row['Planned Release Date'].iloc[0]
+def render_batch_driver_view(row, driver_impacts, model_mae_days):
+    target = pd.to_datetime(row["Planned Release Date"])
+    predicted = pd.to_datetime(row["Predicted Release Date"])
+    delta = int((predicted - target).days)
 
-st.subheader(f'Batch {batch}')
-c1,c2,c3,c4=st.columns(4)
-c1.metric('Predicted release date',pred_date.strftime('%d %b %Y'))
-c2.metric('Predicted lead time',f'{pred_days:.1f} days')
-c3.metric('QC backlog at start',int(row['QC Backlog at Start'].iloc[0]))
-c4.metric('Prior 90-day OOS',int(row['OOS Count Previous 90 Days'].iloc[0]))
-
-st.caption('Prediction uses the point-in-time fields available at QC entry. Actual release is displayed only for historical comparison and is not a model input.')
-left,right=st.columns([1,1])
-with left:
-    st.markdown('### Batch context')
-    context=pd.DataFrame({'Field':['Material','Supplier','CMO Site','Prediction / Start Date','Planned Release Date','Actual Release Date (historical)'], 'Value':[str(row.Material.iloc[0]),str(row['Supplier Name'].iloc[0]),str(row['CMO Site'].iloc[0]),row['Prediction / Start Date'].iloc[0].strftime('%d %b %Y'),planned.strftime('%d %b %Y'),actual_date.strftime('%d %b %Y')]})
-    st.dataframe(context,hide_index=True,use_container_width=True)
-with right:
-    st.markdown('### Release-date comparison')
-    dates=pd.DataFrame({'Date':[planned,pred_date,actual_date]},index=['Planned','Predicted','Actual'])
-    base=row['Prediction / Start Date'].iloc[0]
-    days=(dates['Date']-base).dt.days
-    fig,ax=plt.subplots(figsize=(6,3.4)); colors=['#b7a7b1','#a6006d','#54213f']; ax.barh(days.index,days.values,color=colors); ax.set_xlabel('Days from QC entry'); ax.set_title('Lead-time comparison'); st.pyplot(fig,use_container_width=True)
-
-st.markdown('### Why did the model predict this date?')
-Xt=model.named_steps['prep'].transform(row[FEATURES])
-fn=model.named_steps['prep'].get_feature_names_out()
-rf=model.named_steps['model']; ex=shap.TreeExplainer(rf); sv=ex(Xt)
-vals=sv.values[0]
-# aggregate one-hot encoded SHAP values back to business feature groups
-agg=[]
-for original in FEATURES:
-    if original in NUM:
-        idx=[i for i,n in enumerate(fn) if n==f'num__{original}']
+    if delta >= 5:
+        risk_label = "HIGH RISK"
+        risk_color = "#dc0073"
+    elif delta >= 2:
+        risk_label = "MEDIUM RISK"
+        risk_color = "#f59e0b"
     else:
-        idx=[i for i,n in enumerate(fn) if n.startswith(f'cat__{original}_')]
-    agg.append((original,float(vals[idx].sum()) if idx else 0.0))
-drivers=pd.DataFrame(agg,columns=['Driver','SHAP impact (days)']); drivers['Abs']=drivers['SHAP impact (days)'].abs(); drivers=drivers.sort_values('Abs',ascending=False).head(7)
-fig,ax=plt.subplots(figsize=(10,4)); dd=drivers.sort_values('SHAP impact (days)'); ax.barh(dd.Driver,dd['SHAP impact (days)'],color=np.where(dd['SHAP impact (days)']>=0,'#d4147a','#5577aa')); ax.axvline(0,color='#555',lw=.8); ax.set_xlabel('Impact on predicted lead time (days)'); ax.set_title('SHAP drivers for selected batch'); st.pyplot(fig,use_container_width=True)
-st.dataframe(drivers[['Driver','SHAP impact (days)']].style.format({'SHAP impact (days)':'{:+.2f}'}),hide_index=True,use_container_width=True)
-st.info('Positive SHAP values push predicted lead time later; negative values pull it earlier. SHAP explains the model prediction, not a causal reason for a quality delay.')
+        risk_label = "LOW RISK"
+        risk_color = "#16866b"
 
-with st.expander('Model input used for this prediction'):
-    st.dataframe(row[FEATURES],hide_index=True,use_container_width=True)
-with st.expander('About this prototype'):
-    st.write('Hackathon proof of concept using the supplied expanded synthetic historical dataset. Model training uses the earlier 80% of batches by prediction date; the current-batch OOS outcome is excluded from predictors to preserve point-in-time logic.')
+    batch = str(row["Batch ID"])
+    site = str(row.get("CMO Site", ""))
+    product = str(row.get("Material", ""))
+
+    c1, c2 = st.columns([0.39, 1.0], gap="medium")
+
+    with c1:
+        st.markdown(
+            f"""
+            <div class="snap">
+              <div class="eyebrow">BATCH SNAPSHOT</div>
+              <div class="batchid">{batch}</div>
+              <div class="sub">{site} &nbsp;|&nbsp; {product}</div>
+              <div class="rule"></div>
+              <div class="kv"><span>Target release</span><b>{target.strftime('%d %b')}</b></div>
+              <div class="kv"><span>Predicted release</span><b>{predicted.strftime('%d %b')}</b></div>
+              <div class="risk" style="background:{risk_color}">{delta:+d} DAYS &nbsp;|&nbsp; {risk_label}</div>
+              <div class="kv"><span>Model MAE</span><b>± {model_mae_days:.1f} days</b></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with c2:
+        st.markdown(
+            '<div class="driverhead">DRIVER VIEW</div><div class="driver-title">Impact on predicted release lead time</div>',
+            unsafe_allow_html=True,
+        )
+
+        impacts = pd.Series(driver_impacts, dtype=float).dropna()
+
+        if impacts.empty:
+            st.info("No driver explanation is available for the selected batch.")
+        else:
+            impacts = impacts.reindex(impacts.abs().sort_values(ascending=False).index).head(6)
+            plot_impacts = impacts.iloc[::-1]
+
+            colors = ["#319474" if value < 0 else "#cb3e55" for value in plot_impacts.values]
+            strongest = impacts.abs().idxmax()
+            strongest_position = list(plot_impacts.index).index(strongest)
+            colors[strongest_position] = "#e00073" if impacts[strongest] >= 0 else "#16866b"
+
+            fig, ax = plt.subplots(figsize=(8.6, 4.4), facecolor="white")
+            ax.set_facecolor("white")
+
+            y = np.arange(len(plot_impacts))
+            ax.barh(y, plot_impacts.values, color=colors, height=0.55)
+            ax.axvline(0, color="#9aa5ad", linewidth=1.2)
+
+            max_abs = max(1.0, float(plot_impacts.abs().max()))
+            ax.set_xlim(-max_abs * 1.55, max_abs * 1.55)
+            ax.set_yticks(y)
+            ax.set_yticklabels(plot_impacts.index, fontsize=10, color="#2d2030")
+
+            for i, value in enumerate(plot_impacts.values):
+                offset = max_abs * 0.05
+                ax.text(
+                    value + (offset if value >= 0 else -offset),
+                    i,
+                    f"{value:+.1f} days",
+                    va="center",
+                    ha="left" if value >= 0 else "right",
+                    fontsize=9,
+                    fontweight="bold",
+                    color="#cb3e55" if value >= 0 else "#25876d",
+                )
+
+            ax.text(0.02, 1.03, "Earlier release", transform=ax.transAxes, color="#25876d", fontsize=9)
+            ax.text(0.98, 1.03, "Later release", transform=ax.transAxes, color="#cb3e55", fontsize=9, ha="right")
+            ax.set_xlabel("SHAP impact on predicted lead time (days)", fontsize=9)
+            ax.set_ylabel("")
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.spines["left"].set_visible(False)
+            ax.tick_params(axis="y", length=0)
+            ax.grid(False)
+            fig.subplots_adjust(left=0.28, right=0.95, top=0.88, bottom=0.18)
+
+            st.pyplot(fig, use_container_width=True, clear_figure=True)
+            plt.close(fig)
+
+            net_impact = float(impacts.sum())
+            st.markdown(
+                f'<div class="impact-note">Net displayed-driver impact: approximately {net_impact:+.1f} days versus the model baseline</div>',
+                unsafe_allow_html=True,
+            )
+
+
+st.title("EQ Predictive Release Lead Time")
+st.caption("Prediction + batch-level explainability")
+
+batch_ids = predictions["Batch ID"].dropna().astype(str).unique().tolist()
+selected_batch = st.selectbox("Select Batch ID", batch_ids, index=0, key="selected_batch_id")
+selected_row = predictions.loc[predictions["Batch ID"].astype(str) == selected_batch].iloc[0]
+selected_drivers = driver_map.get(selected_batch, {})
+
+render_batch_driver_view(selected_row, selected_drivers, MODEL_MAE_DAYS)
