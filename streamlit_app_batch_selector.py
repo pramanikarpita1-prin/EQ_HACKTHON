@@ -55,28 +55,193 @@ def render_batch_driver_view(prediction_row, driver_impacts, model_mae_days):
         <div class="kv"><span>Model MAE</span><b>± {model_mae_days:.1f} days</b></div>
         </div>''', unsafe_allow_html=True)
 
-    with c2:
-        st.markdown('<div class="driverbox"><div class="driverhead">DRIVER VIEW</div><div class="driver-title">Impact on predicted release lead time</div>', unsafe_allow_html=True)
-        impacts = pd.Series(driver_impacts, dtype=float)
-        impacts = impacts.reindex(impacts.abs().sort_values(ascending=False).index).head(6)
-        impacts = impacts.sort_values()
-        colors = ['#319474' if v < 0 else ('#e00073' if v == impacts.max() else '#cb3e55') for v in impacts.values]
-        fig, ax = plt.subplots(figsize=(8.2, 3.8))
-        ax.barh(impacts.index, impacts.values, color=colors, height=.55)
-        ax.axvline(0, color='#9aa5ad', lw=1.2)
-        max_abs = max(1.0, float(impacts.abs().max()))
-        ax.set_xlim(-max_abs*1.55, max_abs*1.55)
-        for i,v in enumerate(impacts.values):
-            ax.text(v + (0.05*max_abs if v>=0 else -0.05*max_abs), i, f'{v:+.1f} days', va='center',
-                    ha='left' if v>=0 else 'right', color='#cb3e55' if v>=0 else '#25876d', fontweight='bold', fontsize=9)
-        ax.set_xlabel('SHAP impact on predicted lead time (days)')
-        ax.set_ylabel('')
-        ax.spines[['top','right','left']].set_visible(False)
-        ax.tick_params(axis='y', length=0)
+   with c2:
+    st.markdown(
+        """
+        <div class="driverhead">DRIVER VIEW</div>
+        <div class="driver-title">
+            Impact on predicted release lead time
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    impacts = pd.Series(driver_impacts, dtype=float).dropna()
+
+    if impacts.empty:
+        st.info("No driver explanation is available for this batch.")
+
+    else:
+        # Select strongest SHAP drivers
+        impacts = impacts.reindex(
+            impacts.abs().sort_values(ascending=False).index
+        ).head(6)
+
+        # Reverse so strongest appears toward top
+        plot_impacts = impacts.iloc[::-1]
+
+        colors = [
+            "#319474" if value < 0 else "#cb3e55"
+            for value in plot_impacts.values
+        ]
+
+        # Highlight strongest driver
+        strongest = impacts.abs().idxmax()
+
+        strongest_position = list(
+            plot_impacts.index
+        ).index(strongest)
+
+        colors[strongest_position] = (
+            "#e00073"
+            if impacts[strongest] >= 0
+            else "#16866b"
+        )
+
+        # -------------------------------
+        # DRIVER GRAPH
+        # -------------------------------
+
+        fig, ax = plt.subplots(
+            figsize=(8.6, 4.4),
+            facecolor="white"
+        )
+
+        ax.set_facecolor("white")
+
+        y = np.arange(len(plot_impacts))
+
+        ax.barh(
+            y,
+            plot_impacts.values,
+            color=colors,
+            height=0.55
+        )
+
+        # Baseline
+        ax.axvline(
+            0,
+            color="#9aa5ad",
+            linewidth=1.2
+        )
+
+        # Axis limits
+        max_abs = max(
+            1.0,
+            float(plot_impacts.abs().max())
+        )
+
+        ax.set_xlim(
+            -max_abs * 1.55,
+            max_abs * 1.55
+        )
+
+        # Driver labels
+        ax.set_yticks(y)
+
+        ax.set_yticklabels(
+            plot_impacts.index,
+            fontsize=10,
+            color="#2d2030"
+        )
+
+        # SHAP contribution labels
+        for i, value in enumerate(plot_impacts.values):
+
+            offset = 0.05 * max_abs
+
+            ax.text(
+                value + (
+                    offset
+                    if value >= 0
+                    else -offset
+                ),
+                i,
+                f"{value:+.1f} days",
+                va="center",
+                ha=(
+                    "left"
+                    if value >= 0
+                    else "right"
+                ),
+                color=(
+                    "#cb3e55"
+                    if value >= 0
+                    else "#25876d"
+                ),
+                fontweight="bold",
+                fontsize=9
+            )
+
+        # Direction labels
+
+        ax.text(
+            0.02,
+            1.03,
+            "Earlier release",
+            transform=ax.transAxes,
+            color="#25876d",
+            fontsize=9
+        )
+
+        ax.text(
+            0.98,
+            1.03,
+            "Later release",
+            transform=ax.transAxes,
+            color="#cb3e55",
+            fontsize=9,
+            ha="right"
+        )
+
+        ax.set_xlabel(
+            "SHAP impact on predicted lead time (days)",
+            fontsize=9
+        )
+
+        ax.spines[
+            ["top", "right", "left"]
+        ].set_visible(False)
+
+        ax.tick_params(
+            axis="y",
+            length=0
+        )
+
         ax.grid(False)
-        st.pyplot(fig, use_container_width=True)
-        net=float(impacts.sum())
-        st.markdown(f'<div class="impact-note">Net displayed-driver impact: approximately {net:+.1f} days versus the model baseline</div></div>', unsafe_allow_html=True)
+
+        fig.subplots_adjust(
+            left=0.28,
+            right=0.95,
+            top=0.88,
+            bottom=0.18
+        )
+
+        # IMPORTANT:
+        # Render directly in Streamlit,
+        # NOT inside an HTML <div>
+
+        st.pyplot(
+            fig,
+            use_container_width=True,
+            clear_figure=True
+        )
+
+        plt.close(fig)
+
+        # Net SHAP impact
+        net_impact = float(impacts.sum())
+
+        st.markdown(
+            f"""
+            <div class="impact-note">
+            Net displayed-driver impact:
+            approximately {net_impact:+.1f} days
+            versus the model baseline
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 # ---------------- Batch selector + demo wiring ----------------
 # In your full app, replace demo_predictions/demo_driver_map with your actual model output
